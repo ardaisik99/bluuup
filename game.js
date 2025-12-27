@@ -5,36 +5,26 @@ document.addEventListener('DOMContentLoaded', () => {
     const scoreElement = document.getElementById('scoreBoard');
     const gameOverScreen = document.getElementById('gameOverScreen');
     const finalScoreElement = document.getElementById('finalScore');
+    
+    // Yeni elementler
     const loadingScreen = document.getElementById('loadingScreen');
+    const loadingText = document.getElementById('loadingText');
+    const loaderSpinner = document.getElementById('loaderSpinner');
+    const startButton = document.getElementById('startButton');
 
     if (!gameOverScreen || !scoreElement || !loadingScreen) {
         console.error("HATA: HTML elementleri bulunamadı!");
         return;
     }
 
-    // --- SES YÖNETİMİ (YENİ EKLENDİ) ---
-    // assets klasörüne 'muzik.mp3' adında bir dosya atmayı unutma!
-    const bgMusic = new Audio('assets/muzik.mp3');
-    bgMusic.loop = true; // Müzik bitince başa sarsın
-    bgMusic.volume = 0.5; // Ses seviyesi (0.0 ile 1.0 arası)
-
-    // Tarayıcılar otomatik ses çalmayı engeller. 
-    // Bu yüzden kullanıcı ekrana ilk dokunduğunda müziği başlatıyoruz.
-    function startMusic() {
-        bgMusic.play().catch(e => {
-            console.log("Tarayıcı politikası gereği ses etkileşim bekliyor.");
-        });
-        // Sadece bir kere çalışsın diye dinleyicileri kaldırıyoruz
-        document.removeEventListener('touchstart', startMusic);
-        document.removeEventListener('keydown', startMusic);
-        document.removeEventListener('click', startMusic);
-    }
-
-    // Kullanıcı bir tuşa basarsa veya ekrana dokunursa müziği başlat
-    document.addEventListener('touchstart', startMusic);
-    document.addEventListener('keydown', startMusic);
-    document.addEventListener('click', startMusic);
-
+    // --- SES YÖNETİMİ (GARANTİLİ YÖNTEM) ---
+    const bgMusic = new Audio();
+    bgMusic.src = 'assets/muzik.mp3';
+    bgMusic.loop = true; 
+    bgMusic.volume = 0.5; 
+    
+    // Müziğin yüklendiğinden emin olalım (Preload)
+    bgMusic.load();
 
     // --- RESİM YÖNETİMİ ---
     const images = {};
@@ -49,30 +39,52 @@ document.addEventListener('DOMContentLoaded', () => {
     const eatImages = []; 
 
     let loadedCount = 0;
+    // Resimler + Müzik (Müziği de yükleme sayacına dahil etmeyelim, 
+    // çünkü bazen mobilde müzik yükleme olayı tetiklenmeyebilir, 
+    // sadece resimleri baz alıp müziği butona basınca başlatmak daha güvenli).
     const totalImages = Object.keys(imageSources).length + eatFrameCount;
 
-    function checkAllImagesLoaded() {
+    function checkAllAssetsLoaded() {
         loadedCount++;
         if (loadedCount === totalImages) {
-            loadingScreen.style.display = 'none';
-            // Oyunu başlat
-            requestAnimationFrame(update);
+            // HER ŞEY YÜKLENDİ!
+            // Şimdi "Yükleniyor" yazısını kaldırıp "Başla" butonunu gösterelim.
+            loaderSpinner.style.display = 'none';
+            loadingText.style.display = 'none';
+            startButton.style.display = 'block'; // Butonu göster
         }
     }
 
-    // 1. Sabit Resimler
+    // "OYUNA BAŞLA" Butonuna Basınca Çalışacak Fonksiyon
+    startButton.addEventListener('click', () => {
+        // 1. Müziği Başlat (Kullanıcı etkileşimi olduğu için %100 çalışır)
+        bgMusic.play().then(() => {
+            console.log("Müzik çalıyor.");
+        }).catch((err) => {
+            console.warn("Müzik hatası:", err);
+        });
+
+        // 2. Yükleme ekranını gizle
+        loadingScreen.style.display = 'none';
+
+        // 3. Oyunu Başlat
+        gameRunning = true;
+        requestAnimationFrame(update);
+    });
+
+
+    // --- Resim Yüklemeleri ---
     for (let key in imageSources) {
         images[key] = new Image();
-        images[key].onload = checkAllImagesLoaded;
-        images[key].onerror = checkAllImagesLoaded;
+        images[key].onload = checkAllAssetsLoaded;
+        images[key].onerror = checkAllAssetsLoaded;
         images[key].src = imageSources[key];
     }
 
-    // 2. Yeme Kareleri
     for (let i = 0; i < eatFrameCount; i++) {
         const img = new Image();
-        img.onload = checkAllImagesLoaded;
-        img.onerror = checkAllImagesLoaded;
+        img.onload = checkAllAssetsLoaded;
+        img.onerror = checkAllAssetsLoaded;
         img.src = `assets/karakter_yeme_${i}.png`; 
         eatImages.push(img);
     }
@@ -82,7 +94,8 @@ document.addEventListener('DOMContentLoaded', () => {
     canvas.height = 1920;
 
     // --- OYUN DEĞİŞKENLERİ ---
-    let gameRunning = true;
+    // Başlangıçta false yapıyoruz, butona basınca true olacak
+    let gameRunning = false; 
     let score = 0;
     let lastTime = 0;
     let spawnTimer = 0;
@@ -129,6 +142,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function handleTouch(e) {
         if(e.type === 'touchmove') e.preventDefault(); 
+        
+        // Oyun başlamadıysa dokunmayı algılama
+        if (!gameRunning) return;
+
         const rect = canvas.getBoundingClientRect();
         const scaleX = canvas.width / rect.width; 
         const touchX = (e.touches[0].clientX - rect.left) * scaleX;
@@ -169,7 +186,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Animasyon Mantığı
+        // Animasyon
         if (player.isEating) {
             player.frameTimer += deltaTime * 1000;
             if (player.frameTimer > player.frameInterval) {
@@ -182,7 +199,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         
-        // Oyuncu Hareketi
+        // Hareket
         if (leftPressed && player.x > 0) {
             player.x -= player.speedPPS * deltaTime;
             player.facingRight = false;
@@ -288,9 +305,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function gameOver() {
         gameRunning = false;
-        // Oyun bitince müziği durdurmak istersen bu satırı aç:
-        // bgMusic.pause(); bgMusic.currentTime = 0; 
         
+        // Müzik dursa iyi olur
+        bgMusic.pause();
+        bgMusic.currentTime = 0; 
+
         if(gameOverScreen) gameOverScreen.style.display = 'block';
         if(finalScoreElement) finalScoreElement.innerText = "Skorun: " + score;
     }
@@ -306,10 +325,8 @@ document.addEventListener('DOMContentLoaded', () => {
         player.isEating = false; 
         player.frameX = 0;
         
-        // Oyun yeniden başlayınca müzik çalmıyorsa başlat
-        if (bgMusic.paused) {
-             bgMusic.play().catch(e => console.log(e));
-        }
+        // Yeniden başla deyince müziği tekrar başlat
+        bgMusic.play().catch(e => console.log(e));
 
         if(scoreElement) scoreElement.innerText = "Skor: 0";
         if(gameOverScreen) gameOverScreen.style.display = 'none';

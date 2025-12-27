@@ -5,10 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Turta Yakalama</title>
     <link rel="stylesheet" href="style.css">
-    
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
-        /* Telegram'da kaydırmayı tamamen engellemek için */
         body { overflow: hidden; overscroll-behavior: none; }
     </style>
 </head>
@@ -17,8 +15,9 @@
     <div id="game-container">
         
         <div id="loadingScreen">
-            <div class="loader"></div>
-            <p>YÜKLENİYOR...</p>
+            <div class="loader" id="loaderSpinner"></div>
+            <p id="loadingText">YÜKLENİYOR...</p>
+            <button id="startButton" style="display: none;">OYUNA BAŞLA ▶</button>
         </div>
 
         <div id="scoreBoard">Skor: 0</div>
@@ -36,12 +35,9 @@
     <script src="game.js"></script>
     
     <script>
-        // Oyun yüklendiğinde Telegram'a kendini genişletmesini söyle
         if (window.Telegram && window.Telegram.WebApp) {
             window.Telegram.WebApp.ready();
-            window.Telegram.WebApp.expand(); // Oyunu tam ekran yapar
-            
-            // Arkaplan rengini siyah yaparak bütünlük sağla
+            window.Telegram.WebApp.expand(); 
             window.Telegram.WebApp.setHeaderColor('#000000');
             window.Telegram.WebApp.setBackgroundColor('#000000');
         }

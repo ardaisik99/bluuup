@@ -12,32 +12,69 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
+    // --- SES YÖNETİMİ (YENİ EKLENDİ) ---
+    // assets klasörüne 'muzik.mp3' adında bir dosya atmayı unutma!
+    const bgMusic = new Audio('assets/muzik.mp3');
+    bgMusic.loop = true; // Müzik bitince başa sarsın
+    bgMusic.volume = 0.5; // Ses seviyesi (0.0 ile 1.0 arası)
+
+    // Tarayıcılar otomatik ses çalmayı engeller. 
+    // Bu yüzden kullanıcı ekrana ilk dokunduğunda müziği başlatıyoruz.
+    function startMusic() {
+        bgMusic.play().catch(e => {
+            console.log("Tarayıcı politikası gereği ses etkileşim bekliyor.");
+        });
+        // Sadece bir kere çalışsın diye dinleyicileri kaldırıyoruz
+        document.removeEventListener('touchstart', startMusic);
+        document.removeEventListener('keydown', startMusic);
+        document.removeEventListener('click', startMusic);
+    }
+
+    // Kullanıcı bir tuşa basarsa veya ekrana dokunursa müziği başlat
+    document.addEventListener('touchstart', startMusic);
+    document.addEventListener('keydown', startMusic);
+    document.addEventListener('click', startMusic);
+
+
     // --- RESİM YÖNETİMİ ---
     const images = {};
     const imageSources = {
         bg: 'assets/arkaplan.png',
-        player: 'assets/karakter.png',
+        player: 'assets/karakter.png', 
         pie: 'assets/turta.png',
         ground: 'assets/zemin.png'
     };
 
+    const eatFrameCount = 2; 
+    const eatImages = []; 
+
     let loadedCount = 0;
-    const totalImages = Object.keys(imageSources).length;
+    const totalImages = Object.keys(imageSources).length + eatFrameCount;
 
     function checkAllImagesLoaded() {
         loadedCount++;
         if (loadedCount === totalImages) {
             loadingScreen.style.display = 'none';
-            // Oyunu başlatırken zaman damgasını gönderiyoruz
+            // Oyunu başlat
             requestAnimationFrame(update);
         }
     }
 
+    // 1. Sabit Resimler
     for (let key in imageSources) {
         images[key] = new Image();
         images[key].onload = checkAllImagesLoaded;
         images[key].onerror = checkAllImagesLoaded;
         images[key].src = imageSources[key];
+    }
+
+    // 2. Yeme Kareleri
+    for (let i = 0; i < eatFrameCount; i++) {
+        const img = new Image();
+        img.onload = checkAllImagesLoaded;
+        img.onerror = checkAllImagesLoaded;
+        img.src = `assets/karakter_yeme_${i}.png`; 
+        eatImages.push(img);
     }
 
     // --- ÇÖZÜNÜRLÜK AYARLARI ---
@@ -47,24 +84,26 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- OYUN DEĞİŞKENLERİ ---
     let gameRunning = true;
     let score = 0;
-    
-    // DELTA TIME İÇİN ZAMAN DEĞİŞKENLERİ (YENİ)
     let lastTime = 0;
     let spawnTimer = 0;
 
-    // --- HIZ AYARLARI (ARTIK "PİKSEL/SANİYE" CİNSİNDEN) ---
-    // Not: Delta Time kullandığımız için sayılar büyüdü.
-    // Eskiden frame başına 6 gidiyordu (6 x 60fps = 360).
-    let dropSpeedPPS = 400; // Saniyede 400 piksel aşağı düşüş hızı
-    let spawnInterval = 1500; // Milisaniye cinsinden turta doğma süresi (1.5 saniye)
+    // --- HIZ AYARLARI ---
+    let dropSpeedPPS = 400; 
+    let spawnInterval = 1500; 
 
     // OYUNCU AYARLARI
     const player = {
         width: 280,   
         height: 380,  
         x: (1080 / 2) - 140, 
-        y: 1920 - 470,       
-        speedPPS: 1200 // Player Speed Per Second (Saniyede 1200 piksel hız)
+        y: canvas.height - 380, 
+        speedPPS: 1200,
+        facingRight: true,
+        isEating: false,      
+        frameX: 0,            
+        frameTimer: 0,        
+        frameInterval: 150,    
+        maxFrames: eatFrameCount 
     };
 
     let pies = [];
@@ -90,7 +129,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function handleTouch(e) {
         if(e.type === 'touchmove') e.preventDefault(); 
-
         const rect = canvas.getBoundingClientRect();
         const scaleX = canvas.width / rect.width; 
         const touchX = (e.touches[0].clientX - rect.left) * scaleX;
@@ -112,52 +150,62 @@ document.addEventListener('DOMContentLoaded', () => {
             x: x,
             y: -150, 
             size: size,
-            // Hızlar da artık saniyelik bazda hesaplanıyor
-            speedPPS: dropSpeedPPS + Math.random() * 200 
+            speedPPS: dropSpeedPPS + Math.random() * 200,
+            angle: 0, 
+            rotationSpeed: (Math.random() - 0.5) * 10 
         });
     }
 
-    // UPDATE FONKSİYONU (ZAMAN BAZLI GÜNCELLENDİ)
+    // --- UPDATE ---
     function update(timestamp) {
         if (!gameRunning) return;
 
-        // Delta Time Hesabı: İki kare arasında geçen süreyi (saniye cinsinden) bul.
         if (!lastTime) lastTime = timestamp;
-        const deltaTime = (timestamp - lastTime) / 1000; // ms'yi saniyeye çevir
+        const deltaTime = (timestamp - lastTime) / 1000; 
         lastTime = timestamp;
 
-        // Çok büyük takılmalarda (örn: tarayıcı sekmesi değiştiğinde) hatayı önle
         if (deltaTime > 0.1) {
             requestAnimationFrame(update);
             return;
         }
 
-        // 1. OYUNCU HAREKETİ (Hız * DeltaTime)
-        // Artık 120Hz'de de 60Hz'de de aynı mesafeyi gider.
+        // Animasyon Mantığı
+        if (player.isEating) {
+            player.frameTimer += deltaTime * 1000;
+            if (player.frameTimer > player.frameInterval) {
+                player.frameX++; 
+                player.frameTimer = 0; 
+                if (player.frameX >= player.maxFrames) {
+                    player.frameX = 0;
+                    player.isEating = false; 
+                }
+            }
+        }
+        
+        // Oyuncu Hareketi
         if (leftPressed && player.x > 0) {
             player.x -= player.speedPPS * deltaTime;
+            player.facingRight = false;
         }
         if (rightPressed && player.x + player.width < canvas.width) {
             player.x += player.speedPPS * deltaTime;
+            player.facingRight = true;
         }
         
-        player.y = canvas.height - 470; 
+        player.y = canvas.height - 450; 
 
-        // 2. TURTA ÜRETİMİ (ZAMAN SAYACINA GÖRE)
-        spawnTimer += deltaTime * 1000; // ms olarak ekle
+        spawnTimer += deltaTime * 1000; 
         if (spawnTimer > spawnInterval) {
             spawnPie();
-            spawnTimer = 0; // Sayacı sıfırla
+            spawnTimer = 0; 
         }
 
-        // 3. TURTALARI GÜNCELLE
+        // Turtalar
         for (let i = 0; i < pies.length; i++) {
             let p = pies[i];
-            
-            // Turtayı aşağı indir (Piksel/Saniye * Geçen Süre)
             p.y += p.speedPPS * deltaTime;
+            p.angle += p.rotationSpeed * deltaTime;
 
-            // Hitbox (Değişmedi, aynı mantık)
             let hitBoxX = 70; 
             let hitBoxY = 80; 
 
@@ -167,97 +215,102 @@ document.addEventListener('DOMContentLoaded', () => {
                 p.y < player.y + player.height &&          
                 p.y + p.size > player.y + hitBoxY          
             ) {
-                // Skor
                 score++;
                 scoreElement.innerText = "Skor: " + score;
                 pies.splice(i, 1);
                 i--;
 
-                // Zorluk Artırma
-                if (score % 5 === 0) {
-                    dropSpeedPPS += 50; // Hızı artır
-                    if (spawnInterval > 400) spawnInterval -= 100; // Süreyi kısalt
-                }
+                player.isEating = true;
+                player.frameX = 0;
+                player.frameTimer = 0;
 
+                if (score % 5 === 0) {
+                    dropSpeedPPS += 50; 
+                    if (spawnInterval > 400) spawnInterval -= 100; 
+                }
             }
             else if (p.y > canvas.height - 350) { 
                 gameOver();
             }
         }
 
+        draw();
         requestAnimationFrame(update);
     }
 
     function draw() {
-        if (!gameRunning) return;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // A. Arkaplan
+        // Arkaplan
         if (images.bg.complete) ctx.drawImage(images.bg, 0, 0, canvas.width, canvas.height);
         else { ctx.fillStyle = "#87CEEB"; ctx.fillRect(0, 0, canvas.width, canvas.height); }
 
-        // B. Zemin
-        if (images.ground.complete) ctx.drawImage(images.ground, -100, canvas.height - 1030, 1400, 1820);
+        // Zemin
+        if (images.ground.complete) ctx.drawImage(images.ground, -100, canvas.height - 1050, 1400, 1900);
         else { ctx.fillStyle = "#4CAF50"; ctx.fillRect(0, canvas.height - 100, 1080, 100); }
 
-        // C. Karakter
-        if (images.player.complete) ctx.drawImage(images.player, player.x, player.y, player.width, player.height);
-        else { ctx.fillStyle = "red"; ctx.fillRect(player.x, player.y, player.width, player.height); }
-
-        // D. Turtalar
-        for (let p of pies) {
-            if (images.pie.complete) ctx.drawImage(images.pie, p.x, p.y, p.size, p.size);
-            else { ctx.fillStyle = "orange"; ctx.fillRect(p.x, p.y, p.size, p.size); }
+        // Karakter
+        if (images.player.complete) {
+            ctx.save(); 
+            ctx.translate(player.x + player.width / 2, player.y + player.height / 2);
+            if (!player.facingRight) ctx.scale(-1, 1);
+            
+            if (player.isEating) {
+                const currentEatImage = eatImages[player.frameX];
+                if (currentEatImage && currentEatImage.complete) {
+                    ctx.drawImage(
+                        currentEatImage, 
+                        -player.width / 2, -player.height / 2, 
+                        player.width, player.height 
+                    );
+                }
+            } else {
+                ctx.drawImage(images.player, -player.width / 2, -player.height / 2, player.width, player.height);
+            }
+            ctx.restore(); 
+        } else {
+            ctx.fillStyle = "red"; ctx.fillRect(player.x, player.y, player.width, player.height);
         }
-        
-        // Çizim fonksiyonunu sürekli çağırmaya gerek yok, Update içinde requestAnimationFrame zaten ekranı yeniler.
-        // Ancak çizimin logic'ten ayrılması iyidir. Burada basitlik için update içine almadım ama
-        // frame senkronizasyonu için update döngüsü içinde çizimi çağırmak daha doğru olabilir.
-        // Aşağıdaki "loop" mantığını kullanacağız.
-    }
-    
-    // Çizim ve Mantığı Tek Döngüde Birleştirelim (En pürüzsüz görüntü için)
-    // Yukarıdaki update fonksiyonunun en sonundaki requestAnimationFrame'i değiştirdim.
-    // Artık update fonksiyonu hem hesaplama yapıyor hem de draw'ı çağırıyor.
-    
-    // NOT: draw() fonksiyonunu update'in sonuna eklemeliyiz.
-    // (JavaScript'te fonksiyonlar hoisting olduğu için yerini değiştirmene gerek yok ama
-    // update fonksiyonunun sonuna "draw();" ekledim varsay.)
 
-    // DÜZELTME: update fonksiyonunun sonunu şöyle yapıyoruz:
-    /*
-        draw();
-        requestAnimationFrame(update);
-    */
-    // Kodun içinde bu yapıyı aşağıda güncelledim.
-    
-    // --- GÜNCELLENMİŞ UPDATE SONU ---
-    // (Yukarıdaki update fonksiyonunu kopyalarken draw'ı çağırmayı unutmaman için 
-    // fonksiyonu tekrar yazmak yerine buraya overwrite ediyorum)
-    
-    const originalUpdate = update;
-    update = function(timestamp) {
-        originalUpdate(timestamp);
-        draw(); // Her hesaplamadan sonra çizim yap
-    };
+        // Turtalar
+        for (let p of pies) {
+            if (images.pie.complete) {
+                ctx.save();
+                ctx.translate(p.x + p.size / 2, p.y + p.size / 2);
+                ctx.rotate(p.angle);
+                ctx.drawImage(images.pie, -p.size / 2, -p.size / 2, p.size, p.size);
+                ctx.restore();
+            } else {
+                ctx.fillStyle = "orange"; ctx.fillRect(p.x, p.y, p.size, p.size);
+            }
+        }
+    }
 
     function gameOver() {
         gameRunning = false;
+        // Oyun bitince müziği durdurmak istersen bu satırı aç:
+        // bgMusic.pause(); bgMusic.currentTime = 0; 
+        
         if(gameOverScreen) gameOverScreen.style.display = 'block';
         if(finalScoreElement) finalScoreElement.innerText = "Skorun: " + score;
     }
 
     window.resetGame = function() {
         score = 0;
-        
-        // Reset Değerleri
         dropSpeedPPS = 400; 
         spawnInterval = 1500;
         spawnTimer = 0;
-        lastTime = 0; // Zamanı sıfırla
-        
+        lastTime = 0; 
         pies = [];
+        player.facingRight = true; 
+        player.isEating = false; 
+        player.frameX = 0;
         
+        // Oyun yeniden başlayınca müzik çalmıyorsa başlat
+        if (bgMusic.paused) {
+             bgMusic.play().catch(e => console.log(e));
+        }
+
         if(scoreElement) scoreElement.innerText = "Skor: 0";
         if(gameOverScreen) gameOverScreen.style.display = 'none';
         
